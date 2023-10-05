@@ -8,6 +8,8 @@ using System.Diagnostics;
 using System.Windows.Forms;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace Band2310.Classes
 {
@@ -27,13 +29,13 @@ namespace Band2310.Classes
         public const float THREADS_MIN_TIME = 0.5f;
         public const float THREADS_MAX_TIME = 2.0f;
 
-        private enum ThreadsState
+        public enum ThreadsState
         {
             Working,
             Stopped
         }
 
-        private ThreadsState threadsState = ThreadsState.Stopped;
+        public ThreadsState threadsState = ThreadsState.Stopped;
 
         public delegate void ThreadsFinishedEventHandler(object sender, EventArgs e);
         public event ThreadsFinishedEventHandler ThreadsFinished;
@@ -47,19 +49,14 @@ namespace Band2310.Classes
         //naudojamas Queue, nes yra FIFO (First In First Out) kolekcija
         private static ConcurrentQueue<ThreadInformation> generatedThreadInformation = new ConcurrentQueue<ThreadInformation>();
 
-        private List<System.Threading.Thread> threads = new List<System.Threading.Thread>();
+        private static object syncLock = new object();
+        private static Queue<int> executionOrder = new Queue<int>();
 
-        private static DatabaseManager dbManager;
+        private List<System.Threading.Thread> threads = new List<System.Threading.Thread>();
 
         private ThreadsManager()
         {
             threadsMaxLengthInclusive = THREADS_LINE_MAX_LENGTH + 1;
-
-            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            string mdbFileName = "Threads-uvs.mdb";
-            string mdbFilePath = Path.Combine(baseDirectory, mdbFileName);
-
-            dbManager = new DatabaseManager(mdbFilePath);
         }
 
         public static ThreadsManager Instance
@@ -135,7 +132,7 @@ namespace Band2310.Classes
 
             threads.RemoveAll(thread => !thread.IsAlive);
 
-            Console.WriteLine("Visos gijos pabaige darbą. Pradedamas ThreadsFinished eventas...");
+            Console.WriteLine("Visos gijos pabaige darba. Pradedamas ThreadsFinished eventas...");
             ThreadsFinished?.Invoke(this, EventArgs.Empty);
         }
 
@@ -148,12 +145,14 @@ namespace Band2310.Classes
 
                 System.Threading.Thread.Sleep(sleepTimeInMilliseconds);
 
+                //dar karta patikrinam po laukimo ar reikia testi darba
                 if (threadsState == ThreadsState.Stopped)
                     return;
 
                 string randomLine = GenerateRandomLine();
                 int threadID = fakeID + 1;// System.Threading.Thread.CurrentThread.ManagedThreadId;
-                dbManager.InsertData(threadID, DateTime.Now, randomLine);
+                //DatabaseManager.Instance.InsertData(threadID, DateTime.Now, randomLine);
+                SyncThreadsInsert(threadID, randomLine);
                 AddGeneratedString(threadID, randomLine);
 
                 Console.WriteLine($"Thread ID: {threadID}, Atsitiktine skaiciu eliute: {randomLine}");
@@ -164,6 +163,30 @@ namespace Band2310.Classes
             catch (Exception e)
             {
                 Console.WriteLine("Klaida metode ThreadCalculations: " + e.Message);
+            }
+        }
+
+        public void SyncThreadsInsert(int threadID, string data)
+        {
+            lock (syncLock)
+            {
+                executionOrder.Enqueue(threadID);
+
+                while (executionOrder.Peek() != threadID)
+                {
+                    Monitor.Wait(syncLock);
+                }
+
+                if (threadsState == ThreadsState.Stopped)
+                {
+                    DequeueAll(executionOrder);
+                    return;
+                }
+
+                DatabaseManager.Instance.InsertData(threadID, DateTime.Now, data);
+
+                executionOrder.Dequeue();
+                Monitor.PulseAll(syncLock);
             }
         }
 
@@ -198,6 +221,19 @@ namespace Band2310.Classes
                 {
                     throw new Exception("Nepavyko pašalinti įrašo");
                 }
+            }
+        }
+
+        public static void DequeueAll<T>(Queue<T> queue)
+        {
+            if (queue == null)
+            {
+                throw new ArgumentNullException(nameof(queue), "Queue reiksme negali buti null.");
+            }
+
+            while (queue.Count > 0)
+            {
+                T item = queue.Dequeue();
             }
         }
     }
