@@ -119,5 +119,26 @@ namespace Band2310
                 threadMainButton.Text = ThreadButtonsTexts[(int)ThreadButtonState.Stopped];
             }
         }
+
+        private void threadsListView_SizeChanged(object sender, EventArgs e)
+        {
+            System.Windows.Forms.ListView listView = (System.Windows.Forms.ListView)sender;
+
+            int fixedColumnsWidth = 0;
+            for (int i = 0; i < listView.Columns.Count - 1; i++)
+            {
+                fixedColumnsWidth += listView.Columns[i].Width;
+            }
+
+            int lastColumnWidth = listView.ClientSize.Width - fixedColumnsWidth;
+
+            int minLastColumnWidth = 100;
+            if (lastColumnWidth < minLastColumnWidth)
+            {
+                lastColumnWidth = minLastColumnWidth;
+            }
+
+            listView.Columns[listView.Columns.Count - 1].Width = lastColumnWidth;
+        }
     }
 }

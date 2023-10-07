@@ -98,6 +98,7 @@
             this.threadsListView.TabIndex = 4;
             this.threadsListView.UseCompatibleStateImageBehavior = false;
             this.threadsListView.View = System.Windows.Forms.View.Details;
+            this.threadsListView.SizeChanged += new System.EventHandler(this.threadsListView_SizeChanged);
             // 
             // threadIDHeader
             // 

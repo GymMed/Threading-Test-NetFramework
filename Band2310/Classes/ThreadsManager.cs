@@ -9,7 +9,6 @@ using System.Windows.Forms;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Collections;
-using System.Collections.Generic;
 
 namespace Band2310.Classes
 {
@@ -50,7 +49,6 @@ namespace Band2310.Classes
         private static ConcurrentQueue<ThreadInformation> generatedThreadInformation = new ConcurrentQueue<ThreadInformation>();
 
         private static object syncLock = new object();
-        private static Queue<int> executionOrder = new Queue<int>();
 
         private List<System.Threading.Thread> threads = new List<System.Threading.Thread>();
 
@@ -123,17 +121,25 @@ namespace Band2310.Classes
 
         public virtual void StopThreads()
         {
-            threadsState = ThreadsState.Stopped;
-
-            foreach (var thread in threads)
+            try
             {
-                thread.Join();
+                threadsState = ThreadsState.Stopped;
+
+                foreach (var thread in threads)
+                {
+                    //thread.Abort();
+                    thread.Join();
+                }
+
+                threads.RemoveAll(thread => !thread.IsAlive);
+
+                Console.WriteLine("Visos gijos pabaige darba. Pradedamas ThreadsFinished eventas...");
+                ThreadsFinished?.Invoke(this, EventArgs.Empty);
             }
-
-            threads.RemoveAll(thread => !thread.IsAlive);
-
-            Console.WriteLine("Visos gijos pabaige darba. Pradedamas ThreadsFinished eventas...");
-            ThreadsFinished?.Invoke(this, EventArgs.Empty);
+            catch(Exception ex)
+            {
+                Console.WriteLine("Klaida StopThreads metode: " + ex.ToString());
+            }
         }
 
         public void ThreadCalculations(int fakeID)
@@ -151,12 +157,22 @@ namespace Band2310.Classes
 
                 string randomLine = GenerateRandomLine();
                 int threadID = fakeID + 1;// System.Threading.Thread.CurrentThread.ManagedThreadId;
-                //DatabaseManager.Instance.InsertData(threadID, DateTime.Now, randomLine);
-                SyncThreadsInsert(threadID, randomLine);
-                AddGeneratedString(threadID, randomLine);
 
-                Console.WriteLine($"Thread ID: {threadID}, Atsitiktine skaiciu eliute: {randomLine}");
-                UiControl?.Invoke(new Action(() => ThreadCalculated?.Invoke(this, EventArgs.Empty)));
+                if (SyncThreadsInsert(threadID, randomLine))
+                {
+                    AddGeneratedString(threadID, randomLine);
+                    Console.WriteLine($"Thread ID: {threadID}, Atsitiktine skaiciu eliute: {randomLine}");
+                }
+
+                //tikrinam, kad nebutu deadlock
+                //UiControl ThreadCalculated eventas yra pradedamas pagrindineje atsakoje
+                //ir laukiamas atsakymas, thread.join priverstinai nutrauke darba ir buna ui freeze
+                //tam tikrinama obijekto busena
+                if (threadsState == ThreadsState.Stopped)
+                    return;
+
+                //naudojam async(BeginInvoke), saugiau jei(Invoke)
+                UiControl?.BeginInvoke(new Action(() => ThreadCalculated?.Invoke(this, EventArgs.Empty)));
 
                 ThreadCalculations(fakeID);
             }
@@ -166,27 +182,23 @@ namespace Band2310.Classes
             }
         }
 
-        public void SyncThreadsInsert(int threadID, string data)
+        /// <summary>
+        /// grazinama bool reiksme, nes db connection nera staigus procesas
+        /// ir InsertData metodas tikrina threadstate, bei naudojamas lock
+        /// </summary>
+        /// <param name="threadID"></param>
+        /// <param name="data"></param>
+        /// <returns></returns>
+        public bool SyncThreadsInsert(int threadID, string data)
         {
             lock (syncLock)
             {
-                executionOrder.Enqueue(threadID);
-
-                while (executionOrder.Peek() != threadID)
-                {
-                    Monitor.Wait(syncLock);
-                }
-
                 if (threadsState == ThreadsState.Stopped)
                 {
-                    DequeueAll(executionOrder);
-                    return;
+                    return false;
                 }
 
-                DatabaseManager.Instance.InsertData(threadID, DateTime.Now, data);
-
-                executionOrder.Dequeue();
-                Monitor.PulseAll(syncLock);
+                return DatabaseManager.Instance.InsertData(threadID, DateTime.Now, data); ;
             }
         }
 
